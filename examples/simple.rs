@@ -1,11 +1,4 @@
 /*
-IMPORTANT NOTICE:
-This example uses TrainerBuilder, which simplifies the process of building
-the trainer at the cost of relying on a lot of implicit behaviour and being
-inflexible. It is recommended to transition to examples/progression/1_simple.rs
-(which does the same as this example) when you are looking to develop your NNUE
-further. Eventually TrainerBuilder will be marked as deprecated.
-
 This is about as simple as you can get with a network, the arch is
     (768 -> HIDDEN_SIZE)x2 -> 1
 and the training schedule is pretty sensible.
@@ -17,43 +10,55 @@ use bullet_lib::{
     trainer::{
         default::{
             formats::sfbinpack::{
-                chess::{piecetype::PieceType, r#move::MoveType},
+                chess::{r#move::MoveType, piecetype::PieceType},
                 TrainingDataEntry,
             },
             inputs, loader, Loss, TrainerBuilder,
         },
         schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
         settings::LocalSettings,
-    },
+    }, value::loader::DirectSequentialDataLoader,
 };
 
+use viriformat::dataformat::Filter;
+
 const HIDDEN_SIZE: usize = 128;
-const SCALE: i32 = 400;
+const SCALE: i32 = 225;
 const QA: i16 = 255;
 const QB: i16 = 64;
 
+        // .input(inputs::ChessBucketsMirrored::new([
+        //     0, 1, 2, 3,
+        //     0, 1, 2, 3,
+        //     4, 4, 5, 5,
+        //     4, 4, 5, 5,
+        //     6, 6, 6, 6,
+        //     6, 6, 6, 6,
+        //     6, 6, 6, 6,
+        //     6, 6, 6, 6,
+        // ]))
 fn main() {
     let mut trainer = TrainerBuilder::default()
         .quantisations(&[QA, QB])
         .optimiser(optimiser::AdamW)
-        .loss_fn(Loss::SigmoidMSE)
-        .input(inputs::Chess768)
+        .loss_fn(Loss::SigmoidMPE(2.5))
+        .input(inputs::ChessBucketsMirrored::default())
         .feature_transformer(HIDDEN_SIZE)
-        .activate(Activation::CReLU)
+        .activate(Activation::SCReLU)
         .add_layer(1)
         .build();
 
     let schedule = TrainingSchedule {
-        net_id: "simple".to_string(),
+        net_id: "simple-Clover-20k-v3-binpack".to_string(),
         eval_scale: SCALE as f32,
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
             start_superbatch: 1,
-            end_superbatch: 40,
+            end_superbatch: 80,
         },
         wdl_scheduler: wdl::ConstantWDL { value: 0.75 },
-        lr_scheduler: lr::StepLR { start: 0.001, gamma: 0.1, step: 18 },
+        lr_scheduler: lr::StepLR { start: 0.001, gamma: 0.1, step: 30 },
         save_rate: 10,
     };
 
@@ -61,25 +66,32 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 64 };
 
-    // loading from a SF binpack
-    let _data_loader = {
-        let file_path = "data/test80-2024-02-feb-2tb7p.min-v2.v6.binpack";
-        let buffer_size_mb = 1024;
-        let threads = 4;
-        fn filter(entry: &TrainingDataEntry) -> bool {
-            entry.ply >= 16
-                && !entry.pos.is_checked(entry.pos.side_to_move())
-                && entry.score.unsigned_abs() <= 10000
-                && entry.mv.mtype() == MoveType::Normal
-                && entry.pos.piece_at(entry.mv.to()).piece_type() == PieceType::None
-        }
-
-        loader::SfBinpackLoader::new(file_path, buffer_size_mb, threads, filter)
+    let filter = Filter {
+        min_ply: 16,
+        min_pieces: 4,
+        max_eval: 8000,
+        filter_tactical: true,
+        filter_check: true,
+        filter_castling: false,
+        max_eval_incorrectness: u32::MAX,
+        random_fen_skipping: false,
+        random_fen_skip_probability: 0.0,
+        wld_filtered: false,
+        wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
+        wdl_model_params_b: [
+            -7.198_907_10,
+            56.139_471_85,
+            -139.910_911_83,
+            182.810_074_27,
+        ],
+        normalise_to_pawn_value: 229,
+        wdl_heuristic_scale: 1.5,
     };
-
     // loading directly from a `BulletFormat` file
-    let data_loader = loader::DirectSequentialDataLoader::new(&["data/baseline.data"]);
+    let data_loader = loader::ViriBinpackLoader::new("G://CloverData//Clover-20k-v3.bin", 2048, 4, filter);
 
+    // let data_loader = DirectSequentialDataLoader::new(&["G://archive//run_2024-01-03_22-34-48_5000000g-64t-no_tb-nnue-dfrc-n5000-bf.bin"]);
+    // let data_loader = DirectSequentialDataLoader::new(&["G://CloverData//Clover-20k-bf-shuffled.bin"]);
     trainer.run(&schedule, &settings, &data_loader);
 }
 
