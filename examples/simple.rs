@@ -24,21 +24,11 @@ use bullet_lib::{
 
 use viriformat::dataformat::Filter;
 
-const HIDDEN_SIZE: usize = 128;
+const HIDDEN_SIZE: usize = 768;
 const SCALE: i32 = 225;
 const QA: i16 = 255;
 const QB: i16 = 64;
 
-        // .input(inputs::ChessBucketsMirrored::new([
-        //     0, 1, 2, 3,
-        //     0, 1, 2, 3,
-        //     4, 4, 5, 5,
-        //     4, 4, 5, 5,
-        //     6, 6, 6, 6,
-        //     6, 6, 6, 6,
-        //     6, 6, 6, 6,
-        //     6, 6, 6, 6,
-        // ]))
 fn main() {
     let mut trainer = ValueTrainerBuilder::default()
         // makes `ntm_inputs` available below
@@ -47,7 +37,7 @@ fn main() {
         // the default AdamW params include clipping to range [-1.98, 1.98]
         .optimiser(optimiser::AdamW)
         // basic piece-square chessboard inputs
-        .inputs(inputs::Chess768)
+        .inputs(inputs::ChessBucketsMirrored::default())
         // chosen such that inference may be efficiently implemented in-engine
         .save_format(&[
             SavedFormat::id("l0w").quantise::<i16>(255),
@@ -74,7 +64,7 @@ fn main() {
         });
 
     let schedule = TrainingSchedule {
-        net_id: "simple-Clover-20k-v3-binpack".to_string(),
+        net_id: "simple768-combined_test11".to_string(),
         eval_scale: SCALE as f32,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -82,9 +72,9 @@ fn main() {
             start_superbatch: 1,
             end_superbatch: 80,
         },
-        wdl_scheduler: wdl::ConstantWDL { value: 0.75 },
-        lr_scheduler: lr::StepLR { start: 0.001, gamma: 0.1, step: 30 },
-        save_rate: 10,
+        wdl_scheduler: wdl::ConstantWDL { value: 0.3 },
+        lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3, final_superbatch: 80 },
+        save_rate: 80,
     };
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 64 };
@@ -99,7 +89,7 @@ fn main() {
         max_eval_incorrectness: u32::MAX,
         random_fen_skipping: false,
         random_fen_skip_probability: 0.0,
-        wld_filtered: false,
+        wdl_filtered: false,
         wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
         wdl_model_params_b: [
             -7.198_907_10,
@@ -107,11 +97,13 @@ fn main() {
             -139.910_911_83,
             182.810_074_27,
         ],
-        normalise_to_pawn_value: 229,
+        material_min: 17,
+        material_max: 78,
+        mom_target: 58,
         wdl_heuristic_scale: 1.5,
     };
     // loading directly from a `BulletFormat` file
-    let data_loader = loader::ViriBinpackLoader::new("G://CloverData//Clover-20k-v3.bin", 2048, 4, filter);
+    let data_loader = loader::ViriBinpackLoader::new("G://CloverData//combined_test11.bin", 1024, 4, filter);
 
     // let data_loader = DirectSequentialDataLoader::new(&["G://archive//run_2024-01-03_22-34-48_5000000g-64t-no_tb-nnue-dfrc-n5000-bf.bin"]);
     // let data_loader = DirectSequentialDataLoader::new(&["G://CloverData//Clover-20k-bf-shuffled.bin"]);

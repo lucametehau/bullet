@@ -4,7 +4,7 @@ import os
 import numpy as np
 
 # Load the CSV file
-whitelist = ["simple-2drops-80", "simple-cosine-80", "simple-clover-more-filter-80"]
+whitelist = ["wdl4-Clover-20k-v4-binpack-50", "simple-Clover-20k-v4-binpack-200", "mirrored-Clover-20k-v4-binpack-200"]
 PATH = "../checkpoints"
 
 dfs = []
