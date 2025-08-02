@@ -12,6 +12,7 @@ use bullet_lib::{
             TrainingDataEntry,
         },
         inputs,
+        outputs::MaterialCount
     },
     nn::optimiser,
     trainer::{
@@ -24,10 +25,11 @@ use bullet_lib::{
 
 use viriformat::dataformat::Filter;
 
-const HIDDEN_SIZE: usize = 768;
+const HIDDEN_SIZE: usize = 1024;
 const SCALE: i32 = 225;
 const QA: i16 = 255;
 const QB: i16 = 64;
+const NUM_OUTPUT_BUCKETS: usize = 8;
 
 fn main() {
     let mut trainer = ValueTrainerBuilder::default()
@@ -38,11 +40,13 @@ fn main() {
         .optimiser(optimiser::AdamW)
         // basic piece-square chessboard inputs
         .inputs(inputs::ChessBucketsMirrored::default())
+        // output buckets
+        .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         // chosen such that inference may be efficiently implemented in-engine
         .save_format(&[
             SavedFormat::id("l0w").quantise::<i16>(255),
             SavedFormat::id("l0b").quantise::<i16>(255),
-            SavedFormat::id("l1w").quantise::<i16>(64),
+            SavedFormat::id("l1w").quantise::<i16>(64).transpose(),
             SavedFormat::id("l1b").quantise::<i16>(255 * 64),
         ])
         // map output into ranges [0, 1] to fit against our labels which
@@ -51,30 +55,30 @@ fn main() {
         // where `wdl` is determined by `wdl_scheduler`
         .loss_fn(|output, target| output.sigmoid().squared_error(target))
         // the basic `(768 -> N)x2 -> 1` inference
-        .build(|builder, stm_inputs, ntm_inputs| {
+        .build(|builder, stm_inputs, ntm_inputs, output_buckets| {
             // weights
             let l0 = builder.new_affine("l0", 768, HIDDEN_SIZE);
-            let l1 = builder.new_affine("l1", 2 * HIDDEN_SIZE, 1);
+            let l1 = builder.new_affine("l1", 2 * HIDDEN_SIZE, NUM_OUTPUT_BUCKETS);
 
             // inference
             let stm_hidden = l0.forward(stm_inputs).screlu();
             let ntm_hidden = l0.forward(ntm_inputs).screlu();
             let hidden_layer = stm_hidden.concat(ntm_hidden);
-            l1.forward(hidden_layer)
+            l1.forward(hidden_layer).select(output_buckets)
         });
 
     let schedule = TrainingSchedule {
-        net_id: "simple768-combined_test11".to_string(),
+        net_id: "simple256-combined3-output-buckets".to_string(),
         eval_scale: SCALE as f32,
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
             start_superbatch: 1,
-            end_superbatch: 80,
+            end_superbatch: 120,
         },
         wdl_scheduler: wdl::ConstantWDL { value: 0.3 },
-        lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3, final_superbatch: 80 },
-        save_rate: 80,
+        lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3, final_superbatch: 120 },
+        save_rate: 120,
     };
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 64 };
@@ -103,7 +107,7 @@ fn main() {
         wdl_heuristic_scale: 1.5,
     };
     // loading directly from a `BulletFormat` file
-    let data_loader = loader::ViriBinpackLoader::new("G://CloverData//combined_test11.bin", 1024, 4, filter);
+    let data_loader = loader::ViriBinpackLoader::new("G://CloverData//interleaved7.bin", 1024, 4, filter);
 
     // let data_loader = DirectSequentialDataLoader::new(&["G://archive//run_2024-01-03_22-34-48_5000000g-64t-no_tb-nnue-dfrc-n5000-bf.bin"]);
     // let data_loader = DirectSequentialDataLoader::new(&["G://CloverData//Clover-20k-bf-shuffled.bin"]);
