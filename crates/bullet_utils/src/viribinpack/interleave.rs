@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{BufReader, BufWriter, Write},
     path::PathBuf,
 };
@@ -20,7 +20,8 @@ pub struct InterleaveOptions {
 impl InterleaveOptions {
     pub fn run(&self) -> anyhow::Result<()> {
         println!("Writing to {:#?}", self.output);
-        println!("Reading from:\n{:#?}", self.inputs);
+        println!("Reading from root directories:\n{:#?}", self.inputs);
+        
         let mut streams = Vec::new();
         let mut total = 0;
 
@@ -28,20 +29,45 @@ impl InterleaveOptions {
         let mut writer = BufWriter::new(target);
 
         let mut total_input_file_size = 0;
-        for path in &self.inputs {
-            let file = File::open(path)?;
 
-            let count = file.metadata()?.len();
+        for root_path in &self.inputs {
+            let entries = fs::read_dir(root_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read directory {}: {}", root_path.display(), e))?;
 
-            total_input_file_size += count;
+            for entry in entries {
+                let entry = entry.map_err(|e| anyhow::anyhow!("Failed to read directory entry: {}", e))?;
+                let path = entry.path();
+                
+                if path.is_file() {
+                    if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
+                        if filename.starts_with("data") {
+                            println!("Found data file: {}", path.display());
+                            
+                            let file = File::open(&path)
+                                .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", path.display(), e))?;
 
-            if count > 0 {
-                let fname =
-                    path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "<unknown>".into());
-                streams.push((count, BufReader::new(file), fname));
-                total += count;
+                            let count = file.metadata()?.len();
+                            total_input_file_size += count;
+
+                            if count > 0 {
+                                let fname = path.file_name()
+                                    .map(|s| s.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| "<unknown>".into());
+                                streams.push((count, BufReader::new(file), fname));
+                                total += count;
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        if streams.is_empty() {
+            println!("No data files found in the specified directories");
+            return Ok(());
+        }
+
+        println!("Processing {} data files with total size {} bytes", streams.len(), total);
 
         let mut remaining = total;
         let mut rng = Rand::default();
