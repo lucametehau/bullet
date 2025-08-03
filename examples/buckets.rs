@@ -25,7 +25,7 @@ use bullet_lib::{
 
 use viriformat::dataformat::Filter;
 
-const HIDDEN_SIZE: usize = 1280;
+const HIDDEN_SIZE: usize = 1024;
 const SCALE: i32 = 225;
 const QA: i16 = 255;
 const QB: i16 = 64;
@@ -39,7 +39,16 @@ fn main() {
         // the default AdamW params include clipping to range [-1.98, 1.98]
         .optimiser(optimiser::AdamW)
         // basic piece-square chessboard inputs
-        .inputs(inputs::ChessBucketsMirrored::default())
+        .inputs(inputs::ChessBucketsMirrored::new([
+            0, 0, 1, 1,
+            0, 0, 1, 1,
+            2, 2, 2, 2,
+            2, 2, 2, 2,
+            3, 3, 3, 3,
+            3, 3, 3, 3,
+            3, 3, 3, 3,
+            3, 3, 3, 3,
+        ]))
         // output buckets
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         // chosen such that inference may be efficiently implemented in-engine
@@ -57,7 +66,7 @@ fn main() {
         // the basic `(768 -> N)x2 -> 1` inference
         .build(|builder, stm_inputs, ntm_inputs, output_buckets| {
             // weights
-            let l0 = builder.new_affine("l0", 768, HIDDEN_SIZE);
+            let l0 = builder.new_affine("l0", 768 * 4, HIDDEN_SIZE);
             let l1 = builder.new_affine("l1", 2 * HIDDEN_SIZE, NUM_OUTPUT_BUCKETS);
 
             // inference
