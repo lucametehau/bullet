@@ -8,13 +8,16 @@ and lr schedulers, depending on your dataset.
 use bullet_lib::{
     game::{
         formats::sfbinpack::{
-            chess::{piecetype::PieceType, r#move::MoveType},
+            chess::{r#move::MoveType, piecetype::PieceType},
             TrainingDataEntry,
         },
-        inputs,
+        inputs::{self, get_num_buckets},
         outputs::MaterialCount
     },
-    nn::optimiser,
+    nn::{
+        optimiser::{AdamW, AdamWParams},
+        InitSettings, Shape,
+    },
     trainer::{
         save::SavedFormat,
         schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
@@ -25,35 +28,50 @@ use bullet_lib::{
 
 use viriformat::dataformat::Filter;
 
-const HIDDEN_SIZE: usize = 1024;
+const HIDDEN_SIZE: usize = 256;
 const SCALE: i32 = 225;
 const QA: i16 = 255;
 const QB: i16 = 64;
 const NUM_OUTPUT_BUCKETS: usize = 8;
 
+const BUCKET_LAYOUT: [usize; 32] = [
+    0, 0, 1, 1,
+    0, 0, 1, 1,
+    2, 2, 2, 2,
+    2, 2, 2, 2,
+    3, 3, 3, 3,
+    3, 3, 3, 3,
+    3, 3, 3, 3,
+    3, 3, 3, 3,
+];
+
 fn main() {
+    const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
+
     let mut trainer = ValueTrainerBuilder::default()
         // makes `ntm_inputs` available below
         .dual_perspective()
         // standard optimiser used in NNUE
         // the default AdamW params include clipping to range [-1.98, 1.98]
-        .optimiser(optimiser::AdamW)
+        .optimiser(AdamW)
         // basic piece-square chessboard inputs
-        .inputs(inputs::ChessBucketsMirrored::new([
-            0, 0, 1, 1,
-            0, 0, 1, 1,
-            2, 2, 2, 2,
-            2, 2, 2, 2,
-            3, 3, 3, 3,
-            3, 3, 3, 3,
-            3, 3, 3, 3,
-            3, 3, 3, 3,
-        ]))
+        .inputs(inputs::ChessBucketsMirrored::new(BUCKET_LAYOUT))
         // output buckets
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         // chosen such that inference may be efficiently implemented in-engine
         .save_format(&[
-            SavedFormat::id("l0w").quantise::<i16>(255),
+            SavedFormat::id("l0w")
+                .add_transform(|builder, _, mut weights| {
+                    let factoriser = builder.get_weights("l0f").get_dense_vals().unwrap();
+                    let expanded = factoriser.repeat(NUM_INPUT_BUCKETS);
+
+                    for (i, &j) in weights.iter_mut().zip(expanded.iter()) {
+                        *i += j;
+                    }
+
+                    weights
+                })
+                .quantise::<i16>(255),
             SavedFormat::id("l0b").quantise::<i16>(255),
             SavedFormat::id("l1w").quantise::<i16>(64).transpose(),
             SavedFormat::id("l1b").quantise::<i16>(255 * 64),
@@ -66,7 +84,15 @@ fn main() {
         // the basic `(768 -> N)x2 -> 1` inference
         .build(|builder, stm_inputs, ntm_inputs, output_buckets| {
             // weights
-            let l0 = builder.new_affine("l0", 768 * 4, HIDDEN_SIZE);
+            // input layer factoriser
+            let l0f = builder.new_weights("l0f", Shape::new(HIDDEN_SIZE, 768), InitSettings::Zeroed);
+            let expanded_factoriser = l0f.repeat(NUM_INPUT_BUCKETS);
+
+            // input layer weights
+            let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, HIDDEN_SIZE);
+            l0.weights = l0.weights + expanded_factoriser;
+
+            // output layer weights
             let l1 = builder.new_affine("l1", 2 * HIDDEN_SIZE, NUM_OUTPUT_BUCKETS);
 
             // inference
@@ -75,6 +101,11 @@ fn main() {
             let hidden_layer = stm_hidden.concat(ntm_hidden);
             l1.forward(hidden_layer).select(output_buckets)
         });
+
+    // need to account for factoriser weight magnitudes
+    let stricter_clipping = AdamWParams { max_weight: 0.99, min_weight: -0.99, ..Default::default() };
+    trainer.optimiser.set_params_for_weight("l0w", stricter_clipping);
+    trainer.optimiser.set_params_for_weight("l0f", stricter_clipping);
 
     let schedule = TrainingSchedule {
         net_id: "net1024-interleaved11-21".to_string(),
