@@ -28,7 +28,7 @@ use bullet_lib::{
 
 use viriformat::dataformat::Filter;
 
-const HIDDEN_SIZE: usize = 256;
+const HIDDEN_SIZE: usize = 1280;
 const SCALE: i32 = 225;
 const QA: i16 = 255;
 const QB: i16 = 64;
@@ -108,7 +108,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l0f", stricter_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "net1024-interleaved11-21".to_string(),
+        net_id: "net1280-interleaved11-24-factorised-wdl03-04".to_string(),
         eval_scale: SCALE as f32,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -116,7 +116,7 @@ fn main() {
             start_superbatch: 1,
             end_superbatch: 500,
         },
-        wdl_scheduler: wdl::ConstantWDL { value: 0.3 },
+        wdl_scheduler: wdl::LinearWDL { start: 0.3, end: 0.4 },
         lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: 500 },
         save_rate: 500,
     };
@@ -147,7 +147,7 @@ fn main() {
         wdl_heuristic_scale: 1.5,
     };
     // loading directly from a `BulletFormat` file
-    let data_loader = loader::ViriBinpackLoader::new("G://CloverData//interleaved11-21.bin", 1024, 4, filter);
+    let data_loader = loader::ViriBinpackLoader::new("/root/interleaved11-24.bin", 2048, 4, filter);
 
     // let data_loader = DirectSequentialDataLoader::new(&["G://archive//run_2024-01-03_22-34-48_5000000g-64t-no_tb-nnue-dfrc-n5000-bf.bin"]);
     // let data_loader = DirectSequentialDataLoader::new(&["G://CloverData//Clover-20k-bf-shuffled.bin"]);
