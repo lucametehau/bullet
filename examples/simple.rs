@@ -120,6 +120,21 @@ fn main() {
         lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: 600 },
         save_rate: 600,
     };
+    
+    // retrain schedule
+    // let schedule = TrainingSchedule {
+    //     net_id: "net1280-interleaved11-26-factorised-wdl04-retrain".to_string(),
+    //     eval_scale: SCALE as f32,
+    //     steps: TrainingSteps {
+    //         batch_size: 16_384,
+    //         batches_per_superbatch: 6104,
+    //         start_superbatch: 1,
+    //         end_superbatch: 100,
+    //     },
+    //     wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
+    //     lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001 * 0.3 * 0.3 * 0.3, final_lr: 0.001 * 0.3 * 0.3 * 0.3 * 0.1, final_superbatch: 100 },
+    //     save_rate: 100,
+    // };
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 64 };
 
@@ -151,6 +166,7 @@ fn main() {
 
     // let data_loader = DirectSequentialDataLoader::new(&["G://archive//run_2024-01-03_22-34-48_5000000g-64t-no_tb-nnue-dfrc-n5000-bf.bin"]);
     // let data_loader = DirectSequentialDataLoader::new(&["G://CloverData//Clover-20k-bf-shuffled.bin"]);
+    trainer.load_from_checkpoint("/root/bullet/checkpoints/net1280-interleaved-11-26-factorised-wdl03-04-600/");
     trainer.run(&schedule, &settings, &data_loader);
 }
 
