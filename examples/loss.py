@@ -4,8 +4,8 @@ import os
 import numpy as np
 
 # Load the CSV file
-whitelist = ["wdl4-Clover-20k-v4-binpack-50", "simple-Clover-20k-v4-binpack-200", "mirrored-Clover-20k-v4-binpack-200"]
-PATH = "../checkpoints"
+whitelist = ["vastai"]
+PATH = "./"
 
 dfs = []
 for file in os.listdir(PATH):
