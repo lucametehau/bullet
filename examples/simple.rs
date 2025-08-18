@@ -131,7 +131,7 @@ fn main() {
     //         start_superbatch: 1,
     //         end_superbatch: 100,
     //     },
-    //     wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
+    //     wdl_scheduler: wdl::ConstantWDL { value: 0.5 },
     //     lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001 * 0.3 * 0.3 * 0.3, final_lr: 0.001 * 0.3 * 0.3 * 0.3 * 0.1, final_superbatch: 100 },
     //     save_rate: 100,
     // };
