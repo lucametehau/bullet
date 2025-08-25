@@ -1,18 +1,18 @@
 use bullet_lib::{
     game::{
-        inputs::{get_num_buckets, ChessBucketsMirrored},
+        inputs::{ChessBucketsMirrored, get_num_buckets},
         outputs::MaterialCount,
     },
     nn::{
-        optimiser::{AdamW, AdamWParams},
         InitSettings, Shape,
+        optimiser::{AdamW, AdamWParams},
     },
     trainer::{
         save::SavedFormat,
-        schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
+        schedule::{TrainingSchedule, TrainingSteps, lr, wdl},
         settings::LocalSettings,
     },
-    value::{loader::DirectSequentialDataLoader, ValueTrainerBuilder},
+    value::{ValueTrainerBuilder, loader::DirectSequentialDataLoader},
 };
 
 fn main() {
@@ -46,8 +46,8 @@ fn main() {
         .save_format(&[
             // merge in the factoriser weights
             SavedFormat::id("l0w")
-                .add_transform(|builder, _, mut weights| {
-                    let factoriser = builder.get_weights("l0f").get_dense_vals().unwrap();
+                .add_transform(|graph, _, mut weights| {
+                    let factoriser = graph.get_weights("l0f").get_dense_vals().unwrap();
                     let expanded = factoriser.repeat(NUM_INPUT_BUCKETS);
 
                     for (i, &j) in weights.iter_mut().zip(expanded.iter()) {

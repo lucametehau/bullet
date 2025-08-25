@@ -1,6 +1,6 @@
-use crate::backend::{
+use crate::{
     device::Device,
-    tensor::{read_from_byte_buffer, DenseMatrix},
+    tensor::{DenseMatrix, read_from_byte_buffer},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

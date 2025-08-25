@@ -6,12 +6,12 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crate::trainer::schedule::{lr::LrScheduler, wdl::WdlScheduler, TrainingSchedule};
-
-use super::{
-    gamerunner::{self, GameRunnerArgs, GameRunnerPathInternal},
+use crate::trainer::{
     logger,
+    schedule::{TrainingSchedule, lr::LrScheduler, wdl::WdlScheduler},
 };
+
+use super::gamerunner::{self, GameRunnerArgs, GameRunnerPathInternal};
 
 #[derive(Clone, Copy)]
 pub enum TimeControl {
@@ -221,7 +221,7 @@ impl EngineType for OpenBenchCompliant {
         build_base.current_dir(repo_path).arg(format!("EXE={out_path}"));
 
         if let Some(net_path) = net {
-            build_base.arg(format!("EVALFILE={}", net_path));
+            build_base.arg(format!("EVALFILE={net_path}"));
         }
 
         match build_base.output() {
@@ -260,10 +260,6 @@ impl EngineType for OpenBenchCompliant {
             prev = word;
         }
 
-        if let Some(bench) = bench {
-            Ok(bench)
-        } else {
-            Err(String::from("Failed to run bench!"))
-        }
+        if let Some(bench) = bench { Ok(bench) } else { Err(String::from("Failed to run bench!")) }
     }
 }

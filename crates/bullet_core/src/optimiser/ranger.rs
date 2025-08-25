@@ -1,16 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    backend::{
-        device::{Device, OperationError},
-        tensor::DenseMatrix,
-    },
+    device::{Device, OperationError},
     optimiser::utils,
+    tensor::DenseMatrix,
 };
 
 use super::{
-    radam::{RAdam, RAdamParams},
     OptimiserState, WrapOptimiser,
+    radam::{RAdam, RAdamParams},
 };
 
 #[derive(Clone, Debug)]
@@ -40,7 +38,7 @@ impl<D: Device, S: OptimiserState<D>> OptimiserState<D> for RangerLookahead<D, S
     fn new(device: Arc<D>, size: usize, params: Self::Params) -> Result<Self, D::DeviceError> {
         Ok(Self {
             inner: S::new(device.clone(), size, params.inner.clone())?,
-            slow_params: DenseMatrix::zeroed(device, size)?,
+            slow_params: DenseMatrix::zeroed(device, size, None)?,
             alpha: params.alpha,
             k: params.k,
             step: 0,

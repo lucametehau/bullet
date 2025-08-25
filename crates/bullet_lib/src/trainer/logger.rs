@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    io::{stdout, Write},
+    io::{Write, stdout},
     sync::atomic::{AtomicBool, Ordering::SeqCst},
     time::Instant,
 };
@@ -26,19 +26,11 @@ pub fn set_cbcs(val: bool) {
 }
 
 pub fn num_cs() -> i32 {
-    if CBCS.load(SeqCst) {
-        35
-    } else {
-        36
-    }
+    if CBCS.load(SeqCst) { 35 } else { 36 }
 }
 
 fn esc() -> &'static str {
-    if CBCS.load(SeqCst) {
-        "\x1b[38;5;225m"
-    } else {
-        ""
-    }
+    if CBCS.load(SeqCst) { "\x1b[38;5;225m" } else { "" }
 }
 
 pub fn report_superbatch_progress(
@@ -83,7 +75,7 @@ pub fn report_superbatch_finished(
         ansi(superbatch, num_cs),
         ansi(format!("{superbatch_time:.1}"), num_cs),
         ansi(format!("{error:.6}"), num_cs),
-        ansi(format!("{:.0}", pos_per_sec), num_cs),
+        ansi(format!("{pos_per_sec:.0}"), num_cs),
         ansi(format!("{total_time:.1}"), num_cs),
     );
 }

@@ -5,15 +5,15 @@ use std::{
     sync::Arc,
 };
 
-use crate::backend::{
+use crate::{
     device::{
-        base::{AdamConfig, BaseOperations},
         Device, OperationError,
+        base::{AdamConfig, BaseOperations},
     },
     tensor::DenseMatrix,
 };
 
-use super::{utils, OptimiserState};
+use super::{OptimiserState, utils};
 
 #[derive(Clone, Copy, Debug)]
 pub struct RAdamParams {
@@ -42,8 +42,8 @@ impl<D: Device> OptimiserState<D> for RAdam<D> {
 
     fn new(device: Arc<D>, size: usize, default_params: Self::Params) -> Result<Self, D::DeviceError> {
         Ok(Self {
-            momentum: DenseMatrix::zeroed(device.clone(), size)?,
-            velocity: DenseMatrix::zeroed(device, size)?,
+            momentum: DenseMatrix::zeroed(device.clone(), size, None)?,
+            velocity: DenseMatrix::zeroed(device, size, None)?,
             params: default_params,
             step: 0,
         })

@@ -8,7 +8,7 @@ use schedule::TrainingSchedule;
 use std::{sync::mpsc, thread, time::Instant};
 
 use crate::{
-    backend::device::{Device, OperationError},
+    device::{Device, OperationError},
     optimiser::{Optimiser, OptimiserState},
 };
 
@@ -50,11 +50,8 @@ impl<D: Device, O: OptimiserState<D>, S> Trainer<D, O, S> {
         println!("{}", logger::ansi("Beginning Training", "34;1"));
 
         let timer = Instant::now();
-        let out_dir = schedule.out_dir.as_str();
         let lr = schedule.lr_schedule;
         let steps = schedule.steps;
-
-        let _ = std::fs::create_dir(out_dir);
 
         self.optimiser.graph.synchronise().unwrap();
 
@@ -64,7 +61,7 @@ impl<D: Device, O: OptimiserState<D>, S> Trainer<D, O, S> {
             let mut batch_no = 0;
             let mut superbatch = steps.start_superbatch;
 
-            dataloader.map_batches(|batch| {
+            dataloader.map_batches(steps.batch_size, |batch| {
                 sender.send(batch).unwrap();
 
                 batch_no += 1;
@@ -131,9 +128,9 @@ impl<D: Device, O: OptimiserState<D>, S> Trainer<D, O, S> {
                 gradient_factor: f32,
                 learning_rate: f32,
             ) -> Result<(), OperationError<D::DeviceError>> {
-                optim.graph.zero_grads_non_blocking()?;
-                optim.graph.forward_non_blocking()?;
-                optim.graph.backward_non_blocking()?;
+                optim.graph.execute("zero_grads")?;
+                optim.graph.execute("forward")?;
+                optim.graph.execute("backward")?;
                 optim.update(gradient_factor, learning_rate)
             }
 

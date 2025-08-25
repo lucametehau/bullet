@@ -8,8 +8,9 @@ and lr schedulers, depending on your dataset.
 use bullet_lib::{
     game::{
         formats::sfbinpack::{
-            chess::{r#move::MoveType, piecetype::PieceType},
+            chess::{piecetype::PieceType, r#move::MoveType},
             TrainingDataEntry,
+            chess::{r#move::MoveType, piecetype::PieceType},
         },
         inputs::{self, get_num_buckets},
         outputs::MaterialCount
@@ -20,10 +21,10 @@ use bullet_lib::{
     },
     trainer::{
         save::SavedFormat,
-        schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
+        schedule::{TrainingSchedule, TrainingSteps, lr, wdl},
         settings::LocalSettings,
     },
-    value::{loader, ValueTrainerBuilder},
+    value::{ValueTrainerBuilder, loader},
 };
 
 use viriformat::dataformat::Filter;

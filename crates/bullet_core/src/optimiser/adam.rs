@@ -1,14 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::backend::{
+use crate::{
     device::{
-        base::{AdamConfig, BaseOperations},
         Device, OperationError,
+        base::{AdamConfig, BaseOperations},
     },
     tensor::DenseMatrix,
 };
 
-use super::{utils, OptimiserState};
+use super::{OptimiserState, utils};
 
 #[derive(Clone, Copy, Debug)]
 pub struct AdamWParams {
@@ -40,8 +40,8 @@ impl<D: Device> OptimiserState<D> for AdamW<D> {
         }
 
         Ok(Self {
-            momentum: DenseMatrix::zeroed(device.clone(), size)?,
-            velocity: DenseMatrix::zeroed(device, size)?,
+            momentum: DenseMatrix::zeroed(device.clone(), size, None)?,
+            velocity: DenseMatrix::zeroed(device, size, None)?,
             params: default_params,
         })
     }

@@ -9,16 +9,17 @@ pub use builder::{NoOutputBuckets, ValueTrainerBuilder};
 
 use crate::{nn::ExecutionContext, value::loader::DefaultDataPreparer};
 use bullet_core::{
-    graph::Node,
+    graph::{GraphNodeId, GraphNodeIdTy, Node},
     optimiser::OptimiserState,
     trainer::{
-        self,
+        self, Trainer,
         dataloader::{PreparedBatchDevice, PreparedBatchHost},
-        logger, Trainer,
+        logger,
     },
 };
 
 use crate::{
+    LocalSettings, TrainingSchedule,
     game::{inputs::SparseInputType, outputs::OutputBuckets},
     lr::LrScheduler,
     trainer::save::SavedFormat,
@@ -27,7 +28,6 @@ use crate::{
         loader::{DefaultDataLoader, LoadableDataType},
     },
     wdl::WdlScheduler,
-    LocalSettings, TrainingSchedule,
 };
 
 /// Value network trainer, generally for training NNUE networks.
@@ -112,6 +112,8 @@ where
             dataloader.clone(),
         );
 
+        let _ = std::fs::create_dir(settings.output_directory);
+
         let lr_scheduler = schedule.lr_scheduler.clone();
 
         let steps = schedule.steps;
@@ -122,11 +124,8 @@ where
         self.train_custom(
             trainer::schedule::TrainingSchedule {
                 steps,
-                save_rate: schedule.save_rate,
-                out_dir: settings.output_directory.to_string(),
                 log_rate: 128,
                 lr_schedule: Box::new(|a, b| lr_scheduler.lr(a, b)),
-                net_id: schedule.net_id.clone(),
             },
             ValueDataLoader { steps, threads: settings.threads, dataloader, wdl: schedule.wdl_scheduler.clone() },
             |_, superbatch, curr_batch, error| {
@@ -184,9 +183,10 @@ where
         self.optimiser.graph.synchronise().unwrap();
         self.optimiser.graph.forward().unwrap();
 
-        let eval = self.optimiser.graph.get_node(self.state.output_node);
+        let id = GraphNodeId::new(self.state.output_node.idx(), GraphNodeIdTy::Values);
+        let eval = self.optimiser.graph.get(id).unwrap();
 
-        let dense_vals = eval.values.dense().unwrap();
+        let dense_vals = eval.dense().unwrap();
         let mut vals = vec![0.0; dense_vals.size()];
         dense_vals.write_to_slice(&mut vals).unwrap();
         vals
@@ -198,7 +198,7 @@ where
     {
         let vals = self.eval_raw_output(fen);
 
-        match &vals[..] {
+        match vals[..] {
             [mut loss, mut draw, mut win] => {
                 let max = win.max(draw).max(loss);
                 win = (win - max).exp();
@@ -207,7 +207,7 @@ where
 
                 (win + draw / 2.0) / (win + draw + loss)
             }
-            [score] => *score,
+            [score] => score,
             _ => panic!("Invalid output size!"),
         }
     }

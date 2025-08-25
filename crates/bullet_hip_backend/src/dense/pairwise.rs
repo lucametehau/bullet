@@ -1,11 +1,13 @@
-use bullet_core::backend::device::DeviceBuffer;
+use bullet_core::device::DeviceBuffer;
 
 use crate::{
-    backend::{ops, Buffer},
     DeviceError,
+    backend::{Buffer, ops},
 };
 
 pub fn pairwise(
+    offset: usize,
+    stride: usize,
     single_size: usize,
     batch_size: usize,
     input: &Buffer<f32>,
@@ -22,13 +24,15 @@ pub fn pairwise(
     }
 
     unsafe {
-        ops::pairwiseMul(batch_size, single_size / 2, input.ptr(), output.mut_ptr());
+        ops::pairwiseMul(stride, batch_size, single_size / 2, input.ptr(), output.mut_ptr().add(offset));
     }
 
     Ok(())
 }
 
 pub fn backprop_pairwise(
+    offset: usize,
+    stride: usize,
     single_size: usize,
     batch_size: usize,
     input: &Buffer<f32>,
@@ -46,7 +50,14 @@ pub fn backprop_pairwise(
     }
 
     unsafe {
-        ops::backpropPairwiseMul(batch_size, single_size / 2, input.ptr(), output_grad.ptr(), input_grad.mut_ptr());
+        ops::backpropPairwiseMul(
+            stride,
+            batch_size,
+            single_size / 2,
+            input.ptr(),
+            output_grad.ptr().add(offset),
+            input_grad.mut_ptr(),
+        );
     }
 
     Ok(())

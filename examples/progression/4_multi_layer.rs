@@ -1,18 +1,18 @@
 use bullet_lib::{
     game::{
-        inputs::{get_num_buckets, ChessBucketsMirrored},
+        inputs::{ChessBucketsMirrored, get_num_buckets},
         outputs::MaterialCount,
     },
     nn::{
-        optimiser::{AdamW, AdamWParams},
         InitSettings, Shape,
+        optimiser::{AdamW, AdamWParams},
     },
     trainer::{
         save::SavedFormat,
-        schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
+        schedule::{TrainingSchedule, TrainingSteps, lr, wdl},
         settings::LocalSettings,
     },
-    value::{loader::DirectSequentialDataLoader, ValueTrainerBuilder},
+    value::{ValueTrainerBuilder, loader::DirectSequentialDataLoader},
 };
 
 fn main() {
@@ -45,8 +45,8 @@ fn main() {
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         .save_format(&[
             SavedFormat::id("l0w")
-                .add_transform(|builder, _, mut weights| {
-                    let factoriser = builder.get_weights("l0f").get_dense_vals().unwrap();
+                .add_transform(|graph, _, mut weights| {
+                    let factoriser = graph.get_weights("l0f").get_dense_vals().unwrap();
                     let expanded = factoriser.repeat(NUM_INPUT_BUCKETS);
 
                     for (i, &j) in weights.iter_mut().zip(expanded.iter()) {
@@ -73,6 +73,7 @@ fn main() {
 
             // input layer weights
             let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, hl_size);
+            l0.init_with_effective_input_size(32);
             l0.weights = l0.weights + expanded_factoriser;
 
             // layerstack weights

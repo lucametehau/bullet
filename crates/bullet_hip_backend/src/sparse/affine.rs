@@ -1,17 +1,16 @@
 use bullet_core::{
-    backend::device::{DeviceBuffer, OperationError},
-    graph::ir::{op::DiffableFromOutput, shape::Shape},
+    device::{DeviceBuffer, OperationError},
+    graph::ir::{operation::unary::DiffableFromOutput, shape::Shape},
 };
 
 use crate::{
-    backend::{ops, Buffer},
     OperationResult,
+    backend::{Buffer, ops},
 };
 
 #[allow(clippy::too_many_arguments)]
 pub fn sparse_affine(
     batch_size: usize,
-    stride: Option<bool>,
     activation: DiffableFromOutput,
     input_a: &Buffer<f32>,
     shape_a: Shape,
@@ -25,11 +24,9 @@ pub fn sparse_affine(
 ) -> OperationResult {
     let shape_o = shape_a * shape_b;
 
-    let (stride, offset) = if let Some(b) = stride { (2, if b { shape_a.rows() } else { 0 }) } else { (1, 0) };
-
     if shape_a.size() > input_a.size()
         || batch_size * nnz > input_b.size()
-        || batch_size * shape_o.size() * stride > output.size()
+        || batch_size * shape_o.size() > output.size()
     {
         return Err(OperationError::IndexOutOfBounds);
     }
@@ -57,7 +54,6 @@ pub fn sparse_affine(
     unsafe {
         ops::sparse_affine(
             activation as i32,
-            stride,
             nnz,
             shape_a.rows(),
             shape_a.cols(),
@@ -67,7 +63,7 @@ pub fn sparse_affine(
             input_b.ptr(),
             v_ptr,
             c_ptr,
-            output.mut_ptr().add(offset),
+            output.mut_ptr(),
         );
     }
 
@@ -77,16 +73,13 @@ pub fn sparse_affine(
 #[allow(clippy::too_many_arguments)]
 pub fn backprop_sparse_affine(
     batch_size: usize,
-    stride: Option<bool>,
     activation: DiffableFromOutput,
-    input_a: &Buffer<f32>,
     input_a_grad: &mut Buffer<f32>,
     shape_a: Shape,
     input_b: &Buffer<i32>,
     input_b_vals: Option<&Buffer<f32>>,
     shape_b: Shape,
     nnz: usize,
-    _input_c: Option<&Buffer<f32>>,
     input_c_grad: Option<&mut Buffer<f32>>,
     input_c_batched: bool,
     outputs: &Buffer<f32>,
@@ -94,15 +87,12 @@ pub fn backprop_sparse_affine(
 ) -> OperationResult {
     let shape_o = shape_a * shape_b;
 
-    let (stride, offset) = if let Some(b) = stride { (2, if b { shape_a.rows() } else { 0 }) } else { (1, 0) };
-
     assert_eq!(shape_b.cols(), 1);
     assert_eq!(shape_o.cols(), 1);
-    if shape_a.size() > input_a.size()
-        || shape_a.size() > input_a_grad.size()
+    if shape_a.size() > input_a_grad.size()
         || batch_size * nnz > input_b.size()
         || batch_size * shape_o.size() > outputs.size()
-        || batch_size * shape_o.size() * stride > output_grad.size()
+        || batch_size * shape_o.size() > output_grad.size()
     {
         return Err(OperationError::IndexOutOfBounds);
     }
@@ -130,7 +120,6 @@ pub fn backprop_sparse_affine(
     unsafe {
         ops::sparse_affine_backward(
             activation as i32,
-            stride,
             nnz,
             shape_a.rows(),
             shape_a.cols(),
@@ -138,8 +127,8 @@ pub fn backprop_sparse_affine(
             input_c_batched,
             input_b.ptr(),
             v_ptr,
-            outputs.ptr().add(offset),
-            output_grad.ptr().add(offset),
+            outputs.ptr(),
+            output_grad.ptr(),
             input_a_grad.mut_ptr(),
             c_ptr,
         );

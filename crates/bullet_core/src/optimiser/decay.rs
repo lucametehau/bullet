@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::backend::{
+use crate::{
     device::{Device, OperationError},
     tensor::DenseMatrix,
 };
 
-use super::{utils::Placement, OptimiserState};
+use super::{OptimiserState, utils::Placement};
 
 #[derive(Clone, Debug)]
 pub struct WeightDecayParams<T> {

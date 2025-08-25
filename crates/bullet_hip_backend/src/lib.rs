@@ -3,22 +3,17 @@ pub mod dense;
 mod matmul;
 pub mod sparse;
 
-#[cfg(test)]
-mod tests;
-
 pub use backend::ExecutionContext;
-use backend::{bindings, ops, util, Buffer};
+use backend::{Buffer, bindings, ops, util};
 
 use bullet_core::{
-    backend::{
-        device::{
-            base::{AdamConfig, BaseOperations},
-            blas::{BlasOperations, GemmConfig},
-            Device, DeviceBuffer, OperationError,
-        },
-        tensor,
+    device::{
+        Device, DeviceBuffer, OperationError,
+        base::{AdamConfig, BaseOperations},
+        blas::{BlasOperations, GemmConfig},
     },
-    graph::ir::{op::DiffableFromOutput, shape::Shape},
+    graph::ir::{BackendMarker, operation::unary::DiffableFromOutput, shape::Shape},
+    tensor,
 };
 
 pub type DenseMatrix = tensor::DenseMatrix<ExecutionContext>;
@@ -37,21 +32,13 @@ pub enum DeviceError {
 
 impl From<bindings::cublasStatus_t> for Result<(), DeviceError> {
     fn from(value: bindings::cublasStatus_t) -> Self {
-        if value == bindings::CUBLAS_SUCCESS {
-            Ok(())
-        } else {
-            Err(DeviceError::Cublas(value))
-        }
+        if value == bindings::CUBLAS_SUCCESS { Ok(()) } else { Err(DeviceError::Cublas(value)) }
     }
 }
 
 impl From<bindings::cudaError_t> for Result<(), DeviceError> {
     fn from(value: bindings::cudaError_t) -> Self {
-        if value == bindings::SUCCESS {
-            Ok(())
-        } else {
-            Err(DeviceError::Cuda(value))
-        }
+        if value == bindings::SUCCESS { Ok(()) } else { Err(DeviceError::Cuda(value)) }
     }
 }
 
@@ -66,17 +53,6 @@ impl BlasOperations for Buffer<f32> {
 
     fn gebmm(&mut self, config: &GemmConfig, batch_size: usize, a: &Self, b: &Self) -> Result<(), Self::BlasError> {
         matmul::sgemm_batched(config, batch_size, a, b, self)
-    }
-
-    fn geam(
-        &mut self,
-        size: usize,
-        alpha: f32,
-        a: Option<&Self>,
-        beta: f32,
-        b: Option<&Self>,
-    ) -> Result<(), Self::BlasError> {
-        dense::linear_comb_single(size, alpha, a, beta, b, self)
     }
 }
 
@@ -128,6 +104,18 @@ impl BaseOperations for Buffer<f32> {
         }
     }
 
+    fn mul_scalar(&mut self, size: usize, alpha: f32) -> Result<(), Self::BaseError> {
+        if size > self.size() {
+            return Err(DeviceError::ExpectedIllegalAddressAccess);
+        }
+
+        unsafe {
+            ops::scale_assign(size, self.mut_ptr(), alpha);
+        }
+
+        Ok(())
+    }
+
     fn add_scalar(&mut self, size: usize, alpha: f32, input: &Self) -> Result<(), Self::BaseError> {
         if size > input.size() || size > self.size() {
             return Err(DeviceError::ExpectedIllegalAddressAccess);
@@ -138,6 +126,50 @@ impl BaseOperations for Buffer<f32> {
         }
 
         Ok(())
+    }
+
+    fn linear_comb(&mut self, size: usize, alpha: f32, beta: f32, input: &Self) -> Result<(), Self::BaseError> {
+        if size > input.size() || size > self.size() {
+            return Err(DeviceError::ExpectedIllegalAddressAccess);
+        }
+
+        unsafe {
+            ops::scale_add_assign(size, alpha, self.mut_ptr(), beta, input.ptr());
+        }
+
+        Ok(())
+    }
+
+    fn linear_comb_splat(
+        &mut self,
+        size: usize,
+        reps: usize,
+        alpha: f32,
+        beta: f32,
+        input: &Self,
+    ) -> Result<(), Self::BaseError> {
+        let device = self.device();
+
+        device.with_ones(reps, |ones| {
+            let cfg = GemmConfig::new(beta, alpha, Shape::new(size, 1), false, Shape::new(1, reps), false);
+            self.gemm(&cfg, input, ones)
+        })
+    }
+
+    fn reduce_across_batch(
+        &mut self,
+        size: usize,
+        reps: usize,
+        output_mul: f32,
+        input_mul: f32,
+        input: &Self,
+    ) -> Result<(), Self::BaseError> {
+        let device = self.device();
+
+        device.with_ones(reps, |ones| {
+            let cfg = GemmConfig::new(input_mul, output_mul, Shape::new(size, reps), false, Shape::new(reps, 1), false);
+            self.gemm(&cfg, input, ones)
+        })
     }
 
     fn abs_pow_scalar(&mut self, size: usize, alpha: f32, input: &Self) -> Result<(), Self::BaseError> {
@@ -184,12 +216,27 @@ impl BaseOperations for Buffer<f32> {
         dense::copy_or_add_strided(rows, cols, a, offset_a, stride_a, self, offset, stride, add)
     }
 
-    fn pairwise_fwd(&mut self, size: usize, batch_size: usize, a: &Self) -> Result<(), Self::BaseError> {
-        dense::pairwise(size, batch_size, a, self)
+    fn pairwise_fwd(
+        &mut self,
+        offset: usize,
+        stride: usize,
+        size: usize,
+        batch_size: usize,
+        a: &Self,
+    ) -> Result<(), Self::BaseError> {
+        dense::pairwise(offset, stride, size, batch_size, a, self)
     }
 
-    fn pairwise_bwd(&mut self, size: usize, batch_size: usize, a: &Self, grd: &Self) -> Result<(), Self::BaseError> {
-        dense::backprop_pairwise(size, batch_size, a, grd, self)
+    fn pairwise_bwd(
+        &mut self,
+        offset: usize,
+        stride: usize,
+        size: usize,
+        batch_size: usize,
+        a: &Self,
+        grd: &Self,
+    ) -> Result<(), Self::BaseError> {
+        dense::backprop_pairwise(offset, stride, size, batch_size, a, grd, self)
     }
 
     fn power_error_fwd(&mut self, power: f32, size: usize, a: &Self, b: &Self) -> Result<(), Self::BaseError> {
@@ -223,7 +270,14 @@ impl BaseOperations for Buffer<f32> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HipMarker;
+impl BackendMarker for HipMarker {
+    type Backend = ExecutionContext;
+}
+
 impl Device for ExecutionContext {
+    type Marker = HipMarker;
     type BufferF32 = Buffer<f32>;
     type BufferI32 = Buffer<i32>;
     type DeviceError = DeviceError;
@@ -243,16 +297,13 @@ impl Device for ExecutionContext {
 
     fn backprop_sparse_affine_activate(
         batch_size: usize,
-        stride: Option<bool>,
         activation: DiffableFromOutput,
-        input_a: &Self::BufferF32,
         input_a_grad: &mut Self::BufferF32,
         shape_a: Shape,
         input_b: &Self::BufferI32,
         input_b_vals: Option<&Self::BufferF32>,
         shape_b: Shape,
         nnz: usize,
-        input_c: Option<&Self::BufferF32>,
         input_c_grad: Option<&mut Self::BufferF32>,
         input_c_batched: bool,
         outputs: &Self::BufferF32,
@@ -260,16 +311,13 @@ impl Device for ExecutionContext {
     ) -> OperationResult {
         sparse::backprop_sparse_affine(
             batch_size,
-            stride,
             activation,
-            input_a,
             input_a_grad,
             shape_a,
             input_b,
             input_b_vals,
             shape_b,
             nnz,
-            input_c,
             input_c_grad,
             input_c_batched,
             outputs,
@@ -279,7 +327,6 @@ impl Device for ExecutionContext {
 
     fn sparse_affine_activate(
         batch_size: usize,
-        stride: Option<bool>,
         activation: DiffableFromOutput,
         input_a: &Self::BufferF32,
         shape_a: Shape,
@@ -293,7 +340,6 @@ impl Device for ExecutionContext {
     ) -> OperationResult {
         sparse::sparse_affine(
             batch_size,
-            stride,
             activation,
             input_a,
             shape_a,
@@ -309,24 +355,34 @@ impl Device for ExecutionContext {
 
     fn select(
         batch_size: usize,
+        input_batched: bool,
         input_size: usize,
         output_size: usize,
         input: &Self::BufferF32,
         indices: &Self::BufferI32,
         output: &mut Self::BufferF32,
     ) -> OperationResult {
-        sparse::select(batch_size, input_size, output_size, input, indices, output)
+        sparse::select(batch_size, input_batched, input_size, output_size, input, indices, output)
     }
 
     fn select_backprop(
         batch_size: usize,
+        input_grad_batched: bool,
         input_size: usize,
         output_size: usize,
         indices: &Self::BufferI32,
         output_grad: &Self::BufferF32,
         input_grad: &mut Self::BufferF32,
     ) -> OperationResult {
-        sparse::select_backprop(batch_size, input_size, output_size, indices, output_grad, input_grad)
+        sparse::select_backprop(
+            batch_size,
+            input_grad_batched,
+            input_size,
+            output_size,
+            indices,
+            output_grad,
+            input_grad,
+        )
     }
 
     fn sparse_to_dense(
@@ -365,95 +421,5 @@ impl Device for ExecutionContext {
         input_grad: &mut Self::BufferF32,
     ) -> OperationResult {
         dense::backprop_softmax_crossentropy(size, softmaxed, target, output_grad, input_grad)
-    }
-
-    fn mask(
-        batch_size: usize,
-        single_size: usize,
-        nnz: usize,
-        inputs: &Self::BufferF32,
-        masks: &Self::BufferI32,
-        outputs: &mut Self::BufferF32,
-    ) -> OperationResult {
-        sparse::mask(batch_size, single_size, inputs, masks, nnz, outputs)
-    }
-
-    fn backprop_mask(
-        batch_size: usize,
-        single_size: usize,
-        nnz: usize,
-        output_grads: &Self::BufferF32,
-        masks: &Self::BufferI32,
-        input_grads: &mut Self::BufferF32,
-    ) -> OperationResult {
-        sparse::backprop_mask(batch_size, single_size, output_grads, masks, nnz, input_grads)
-    }
-
-    fn gather(
-        batch_size: usize,
-        input_size: usize,
-        output_size: usize,
-        inputs: &Self::BufferF32,
-        indices: &Self::BufferI32,
-        outputs: &mut Self::BufferF32,
-    ) -> OperationResult {
-        sparse::gather(batch_size, input_size, output_size, inputs, indices, outputs)
-    }
-
-    fn backprop_gather(
-        batch_size: usize,
-        input_size: usize,
-        output_size: usize,
-        output_grads: &Self::BufferF32,
-        indices: &Self::BufferI32,
-        input_grads: &mut Self::BufferF32,
-    ) -> OperationResult {
-        sparse::backprop_gather(batch_size, input_size, output_size, output_grads, indices, input_grads)
-    }
-
-    fn softmax_across_batch_masked(
-        batch_size: usize,
-        single_size: usize,
-        nnz: usize,
-        masks: &Self::BufferI32,
-        input: &Self::BufferF32,
-        output: &mut Self::BufferF32,
-    ) -> OperationResult {
-        sparse::softmax_across_batch_masked(batch_size, single_size, nnz, masks, input, output)
-    }
-
-    fn crossentropy_masked(
-        batch_size: usize,
-        single_size: usize,
-        nnz: usize,
-        masks: &Self::BufferI32,
-        pred: &Self::BufferF32,
-        target: &Self::BufferF32,
-        output: &mut Self::BufferF32,
-        error: &mut Self::BufferF32,
-    ) -> OperationResult {
-        sparse::crossentropy_masked(batch_size, single_size, nnz, masks, pred, target, output, error)
-    }
-
-    fn backprop_softmax_crossentropy_masked(
-        batch_size: usize,
-        single_size: usize,
-        nnz: usize,
-        masks: &Self::BufferI32,
-        softmaxed: &Self::BufferF32,
-        target: &Self::BufferF32,
-        output_grad: &Self::BufferF32,
-        input_grad: &mut Self::BufferF32,
-    ) -> OperationResult {
-        sparse::backprop_softmax_crossentropy_masked(
-            batch_size,
-            single_size,
-            nnz,
-            masks,
-            softmaxed,
-            target,
-            output_grad,
-            input_grad,
-        )
     }
 }

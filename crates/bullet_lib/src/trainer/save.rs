@@ -1,12 +1,15 @@
 use std::io::{self, Write};
 
+use bullet_core::graph::{GraphNodeId, GraphNodeIdTy};
+
 use crate::nn::{Graph, Shape};
 
 type F = fn(&Graph, &str, Vec<f32>) -> Vec<f32>;
 
 #[derive(Clone)]
 pub struct SavedFormat {
-    pub(crate) id: String,
+    pub(crate) custom: Option<Vec<u8>>,
+    pub(crate) id: Option<String>,
     pub(crate) quant: QuantTarget,
     pub(crate) layout: Layout,
     pub(crate) transforms: Vec<F>,
@@ -14,49 +17,69 @@ pub struct SavedFormat {
 }
 
 impl SavedFormat {
+    pub fn custom(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            custom: Some(bytes.into()),
+            id: None,
+            quant: QuantTarget::Float,
+            layout: Layout::Normal,
+            transforms: Vec::new(),
+            round: false,
+        }
+    }
+
     pub fn id(id: &str) -> Self {
         Self::new(id, QuantTarget::Float, Layout::Normal)
     }
 
     pub fn new(id: &str, quant: QuantTarget, layout: Layout) -> Self {
-        SavedFormat { id: id.to_string(), quant, layout, transforms: Vec::new(), round: false }
+        SavedFormat { custom: None, id: Some(id.to_string()), quant, layout, transforms: Vec::new(), round: false }
     }
 
     pub fn round(mut self) -> Self {
+        assert!(self.custom.is_none());
         self.round = true;
         self
     }
 
     pub fn quantise<T: Quant>(mut self, multiplier: T::Multiplier) -> Self {
+        assert!(self.custom.is_none());
         self.quant = T::to_target(multiplier);
         self
     }
 
     pub fn transpose(self) -> Self {
         self.add_transform(|graph, id, weights| {
-            let shape = graph.get_weights(id).shape();
+            let id = GraphNodeId::new(graph.weight_idx(id).unwrap(), GraphNodeIdTy::Values);
+            let shape = graph.get(id).unwrap().shape();
             Self::transpose_impl(shape, &weights)
         })
     }
 
     pub fn add_transform(mut self, f: F) -> Self {
+        assert!(self.custom.is_none());
         self.transforms.push(f);
         self
     }
 
     pub fn write_to_byte_buffer(&self, graph: &Graph) -> io::Result<Vec<u8>> {
-        let mut weights = graph.get_weights(&self.id).get_dense_vals().unwrap();
+        if let Some(id_str) = &self.id {
+            let id = GraphNodeId::new(graph.weight_idx(id_str).unwrap(), GraphNodeIdTy::Values);
+            let mut weights = graph.get(id).unwrap().get_dense_vals().unwrap();
 
-        if let Layout::Transposed(shape) = self.layout {
-            assert_eq!(shape.size(), weights.len());
-            weights = Self::transpose_impl(shape, &weights);
+            if let Layout::Transposed(shape) = self.layout {
+                assert_eq!(shape.size(), weights.len());
+                weights = Self::transpose_impl(shape, &weights);
+            }
+
+            for transform in &self.transforms {
+                weights = transform(graph, id_str, weights);
+            }
+
+            self.quant.quantise(self.round, &weights)
+        } else {
+            Ok(self.custom.clone().unwrap())
         }
-
-        for transform in &self.transforms {
-            weights = transform(graph, &self.id, weights);
-        }
-
-        self.quant.quantise(self.round, &weights)
     }
 
     pub(crate) fn transpose_impl(shape: Shape, weights: &[f32]) -> Vec<f32> {
@@ -107,11 +130,7 @@ pub enum QuantTarget {
 }
 
 fn round_or_trunc(x: f64, round: bool) -> f64 {
-    if round {
-        x.round()
-    } else {
-        x.trunc()
-    }
+    if round { x.round() } else { x.trunc() }
 }
 
 impl QuantTarget {
