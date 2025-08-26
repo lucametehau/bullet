@@ -8,7 +8,6 @@ and lr schedulers, depending on your dataset.
 use bullet_lib::{
     game::{
         formats::sfbinpack::{
-            chess::{piecetype::PieceType, r#move::MoveType},
             TrainingDataEntry,
             chess::{r#move::MoveType, piecetype::PieceType},
         },
@@ -182,7 +181,7 @@ fn main() {
         wdl_heuristic_scale: 1.5,
     };
     // loading directly from a `BulletFormat` file
-    let data_loader = loader::ViriBinpackLoader::new("/root/interleaved11-28.bin", 2048, 4, filter);
+    let data_loader = loader::ViriBinpackLoader::new("/root/interleaved20-28.bin", 2048, 4, filter);
 
     // let data_loader = DirectSequentialDataLoader::new(&["G://archive//run_2024-01-03_22-34-48_5000000g-64t-no_tb-nnue-dfrc-n5000-bf.bin"]);
     // let data_loader = DirectSequentialDataLoader::new(&["G://CloverData//Clover-20k-bf-shuffled.bin"]);

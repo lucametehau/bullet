@@ -4,7 +4,7 @@ import os
 import numpy as np
 
 # Load the CSV file
-whitelist = ["vastai"]
+whitelist = ["net1280-interleaved11-24-factorised-500"]
 PATH = "./"
 
 dfs = []
