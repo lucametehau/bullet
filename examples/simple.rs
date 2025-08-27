@@ -46,7 +46,7 @@ const BUCKET_LAYOUT: [usize; 32] = [
 ];
 
 const STAGE1_SB: usize = 800;
-const STAGE2_SB: usize = 100;
+const STAGE2_SB: usize = 200;
 
 fn main() {
     const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
@@ -111,7 +111,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l0f", stricter_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "net1280-interleaved11-28".to_string(),
+        net_id: "net1280-interleaved20-28".to_string(),
         eval_scale: SCALE as f32,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -121,7 +121,7 @@ fn main() {
         },
         wdl_scheduler: wdl::Sequence { 
             first: wdl::ConstantWDL { value: 0.4 },
-            second: wdl::ConstantWDL { value: 0.5 },
+            second: wdl::LinearWDL { start: 0.5, end: 0.6 },
             first_scheduler_final_superbatch: STAGE1_SB,
         },
         lr_scheduler: lr::Sequence { 
