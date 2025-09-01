@@ -111,7 +111,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l0f", stricter_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "net1280-interleaved20-28".to_string(),
+        net_id: "net1280-interleaved20-30-wdl05".to_string(),
         eval_scale: SCALE as f32,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -120,7 +120,7 @@ fn main() {
             end_superbatch: STAGE1_SB + STAGE2_SB,
         },
         wdl_scheduler: wdl::Sequence { 
-            first: wdl::ConstantWDL { value: 0.4 },
+            first: wdl::ConstantWDL { value: 0.5 },
             second: wdl::LinearWDL { start: 0.5, end: 0.6 },
             first_scheduler_final_superbatch: STAGE1_SB,
         },
@@ -181,96 +181,10 @@ fn main() {
         wdl_heuristic_scale: 1.5,
     };
     // loading directly from a `BulletFormat` file
-    let data_loader = loader::ViriBinpackLoader::new("/root/interleaved20-28.bin", 2048, 4, filter);
+    let data_loader = loader::ViriBinpackLoader::new("/root/interleaved20-30.bin", 2048, 4, filter);
 
     // let data_loader = DirectSequentialDataLoader::new(&["G://archive//run_2024-01-03_22-34-48_5000000g-64t-no_tb-nnue-dfrc-n5000-bf.bin"]);
     // let data_loader = DirectSequentialDataLoader::new(&["G://CloverData//Clover-20k-bf-shuffled.bin"]);
     // trainer.load_from_checkpoint("/root/bullet/checkpoints/net1280-interleaved-11-26-factorised-wdl03-04-600/");
     trainer.run(&schedule, &settings, &data_loader);
-}
-
-/*
-This is how you would load the network in rust.
-Commented out because it will error if it can't find the file.
-static NNUE: Network =
-    unsafe { std::mem::transmute(*include_bytes!("../checkpoints/simple-10/simple-10.bin")) };
-*/
-
-#[inline]
-/// Clipped ReLU - Activation Function.
-/// Note that this takes the i16s in the accumulator to i32s.
-fn crelu(x: i16) -> i32 {
-    i32::from(x).clamp(0, i32::from(QA))
-}
-
-/// This is the quantised format that bullet outputs.
-#[repr(C)]
-pub struct Network {
-    /// Column-Major `HIDDEN_SIZE x 768` matrix.
-    feature_weights: [Accumulator; 768],
-    /// Vector with dimension `HIDDEN_SIZE`.
-    feature_bias: Accumulator,
-    /// Column-Major `1 x (2 * HIDDEN_SIZE)`
-    /// matrix, we use it like this to make the
-    /// code nicer in `Network::evaluate`.
-    output_weights: [i16; 2 * HIDDEN_SIZE],
-    /// Scalar output bias.
-    output_bias: i16,
-}
-
-impl Network {
-    /// Calculates the output of the network, starting from the already
-    /// calculated hidden layer (done efficiently during makemoves).
-    pub fn evaluate(&self, us: &Accumulator, them: &Accumulator) -> i32 {
-        // Initialise output with bias.
-        let mut output = i32::from(self.output_bias);
-
-        // Side-To-Move Accumulator -> Output.
-        for (&input, &weight) in us.vals.iter().zip(&self.output_weights[..HIDDEN_SIZE]) {
-            output += crelu(input) * i32::from(weight);
-        }
-
-        // Not-Side-To-Move Accumulator -> Output.
-        for (&input, &weight) in them.vals.iter().zip(&self.output_weights[HIDDEN_SIZE..]) {
-            output += crelu(input) * i32::from(weight);
-        }
-
-        // Apply eval scale.
-        output *= SCALE;
-
-        // Remove quantisation.
-        output /= i32::from(QA) * i32::from(QB);
-
-        output
-    }
-}
-
-/// A column of the feature-weights matrix.
-/// Note the `align(64)`.
-#[derive(Clone, Copy)]
-#[repr(C, align(64))]
-pub struct Accumulator {
-    vals: [i16; HIDDEN_SIZE],
-}
-
-impl Accumulator {
-    /// Initialised with bias so we can just efficiently
-    /// operate on it afterwards.
-    pub fn new(net: &Network) -> Self {
-        net.feature_bias
-    }
-
-    /// Add a feature to an accumulator.
-    pub fn add_feature(&mut self, feature_idx: usize, net: &Network) {
-        for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[feature_idx].vals) {
-            *i += *d
-        }
-    }
-
-    /// Remove a feature from an accumulator.
-    pub fn remove_feature(&mut self, feature_idx: usize, net: &Network) {
-        for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[feature_idx].vals) {
-            *i -= *d
-        }
-    }
 }

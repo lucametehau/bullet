@@ -8,52 +8,73 @@ and lr schedulers, depending on your dataset.
 use bullet_lib::{
     game::{
         formats::sfbinpack::{
-            chess::{piecetype::PieceType, r#move::MoveType},
             TrainingDataEntry,
+            chess::{r#move::MoveType, piecetype::PieceType},
         },
-        inputs,
+        inputs::{self, get_num_buckets},
         outputs::MaterialCount
     },
-    nn::optimiser,
+    nn::{
+        optimiser::{AdamW, AdamWParams},
+        InitSettings, Shape,
+    },
     trainer::{
         save::SavedFormat,
-        schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
+        schedule::{TrainingSchedule, TrainingSteps, lr, wdl},
         settings::LocalSettings,
     },
-    value::{loader, ValueTrainerBuilder},
+    value::{ValueTrainerBuilder, loader},
 };
 
 use viriformat::dataformat::Filter;
 
-const HIDDEN_SIZE: usize = 1024;
+const HIDDEN_SIZE: usize = 1280;
 const SCALE: i32 = 225;
 const QA: i16 = 255;
 const QB: i16 = 64;
 const NUM_OUTPUT_BUCKETS: usize = 8;
 
+const BUCKET_LAYOUT: [usize; 32] = [
+    0, 1, 2, 3,
+    0, 1, 2, 3,
+    4, 4, 5, 5,
+    4, 4, 5, 5,
+    6, 6, 6, 6,
+    6, 6, 6, 6,
+    6, 6, 6, 6,
+    6, 6, 6, 6,
+];
+
+const STAGE1_SB: usize = 800;
+const STAGE2_SB: usize = 200;
+
 fn main() {
+    const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
+
     let mut trainer = ValueTrainerBuilder::default()
         // makes `ntm_inputs` available below
         .dual_perspective()
         // standard optimiser used in NNUE
         // the default AdamW params include clipping to range [-1.98, 1.98]
-        .optimiser(optimiser::AdamW)
+        .optimiser(AdamW)
         // basic piece-square chessboard inputs
-        .inputs(inputs::ChessBucketsMirrored::new([
-            0, 0, 1, 1,
-            0, 0, 1, 1,
-            2, 2, 2, 2,
-            2, 2, 2, 2,
-            3, 3, 3, 3,
-            3, 3, 3, 3,
-            3, 3, 3, 3,
-            3, 3, 3, 3,
-        ]))
+        .inputs(inputs::ChessBucketsMirrored::new(BUCKET_LAYOUT))
         // output buckets
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         // chosen such that inference may be efficiently implemented in-engine
         .save_format(&[
-            SavedFormat::id("l0w").quantise::<i16>(255),
+            SavedFormat::id("l0w")
+                .add_transform(|builder, _, mut weights| {
+                    let factoriser = builder.get_weights("l0f").get_dense_vals().unwrap();
+                    let expanded = factoriser.repeat(NUM_INPUT_BUCKETS);
+
+                    for (i, &j) in weights.iter_mut().zip(expanded.iter()) {
+                        *i += j;
+                    }
+
+                    weights
+                })
+                .quantise::<i16>(255),
             SavedFormat::id("l0b").quantise::<i16>(255),
             SavedFormat::id("l1w").quantise::<i16>(64).transpose(),
             SavedFormat::id("l1b").quantise::<i16>(255 * 64),
@@ -66,7 +87,15 @@ fn main() {
         // the basic `(768 -> N)x2 -> 1` inference
         .build(|builder, stm_inputs, ntm_inputs, output_buckets| {
             // weights
-            let l0 = builder.new_affine("l0", 768 * 4, HIDDEN_SIZE);
+            // input layer factoriser
+            let l0f = builder.new_weights("l0f", Shape::new(HIDDEN_SIZE, 768), InitSettings::Zeroed);
+            let expanded_factoriser = l0f.repeat(NUM_INPUT_BUCKETS);
+
+            // input layer weights
+            let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, HIDDEN_SIZE);
+            l0.weights = l0.weights + expanded_factoriser;
+
+            // output layer weights
             let l1 = builder.new_affine("l1", 2 * HIDDEN_SIZE, NUM_OUTPUT_BUCKETS);
 
             // inference
@@ -76,19 +105,55 @@ fn main() {
             l1.forward(hidden_layer).select(output_buckets)
         });
 
+    // need to account for factoriser weight magnitudes
+    let stricter_clipping = AdamWParams { max_weight: 0.99, min_weight: -0.99, ..Default::default() };
+    trainer.optimiser.set_params_for_weight("l0w", stricter_clipping);
+    trainer.optimiser.set_params_for_weight("l0f", stricter_clipping);
+
     let schedule = TrainingSchedule {
-        net_id: "net1024-interleaved11-21".to_string(),
+        net_id: "net1280-interleaved20-28".to_string(),
         eval_scale: SCALE as f32,
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
             start_superbatch: 1,
-            end_superbatch: 500,
+            end_superbatch: STAGE1_SB + STAGE2_SB,
         },
-        wdl_scheduler: wdl::ConstantWDL { value: 0.3 },
-        lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: 500 },
-        save_rate: 500,
+        wdl_scheduler: wdl::Sequence { 
+            first: wdl::ConstantWDL { value: 0.4 },
+            second: wdl::LinearWDL { start: 0.5, end: 0.6 },
+            first_scheduler_final_superbatch: STAGE1_SB,
+        },
+        lr_scheduler: lr::Sequence { 
+            first: lr::CosineDecayLR { 
+                initial_lr: 0.001, 
+                final_lr: 0.001 * 0.3 * 0.3 * 0.3, 
+                final_superbatch: STAGE1_SB 
+            },
+            second: lr::CosineDecayLR { 
+                initial_lr: 0.001 * 0.3 * 0.3 * 0.3, 
+                final_lr: 0.001 * 0.3 * 0.3 * 0.3 * 0.1, 
+                final_superbatch: STAGE2_SB 
+            },
+            first_scheduler_final_superbatch: STAGE1_SB,
+        },
+        save_rate: 200,
     };
+    
+    // retrain schedule
+    // let schedule = TrainingSchedule {
+    //     net_id: "net1280-interleaved11-26-factorised-wdl04-retrain".to_string(),
+    //     eval_scale: SCALE as f32,
+    //     steps: TrainingSteps {
+    //         batch_size: 16_384,
+    //         batches_per_superbatch: 6104,
+    //         start_superbatch: 1,
+    //         end_superbatch: 100,
+    //     },
+    //     wdl_scheduler: wdl::ConstantWDL { value: 0.5 },
+    //     lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001 * 0.3 * 0.3 * 0.3, final_lr: 0.001 * 0.3 * 0.3 * 0.3 * 0.1, final_superbatch: 100 },
+    //     save_rate: 100,
+    // };
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 64 };
 
@@ -116,10 +181,11 @@ fn main() {
         wdl_heuristic_scale: 1.5,
     };
     // loading directly from a `BulletFormat` file
-    let data_loader = loader::ViriBinpackLoader::new("G://CloverData//interleaved11-21.bin", 1024, 4, filter);
+    let data_loader = loader::ViriBinpackLoader::new("/root/interleaved20-28.bin", 2048, 4, filter);
 
     // let data_loader = DirectSequentialDataLoader::new(&["G://archive//run_2024-01-03_22-34-48_5000000g-64t-no_tb-nnue-dfrc-n5000-bf.bin"]);
     // let data_loader = DirectSequentialDataLoader::new(&["G://CloverData//Clover-20k-bf-shuffled.bin"]);
+    // trainer.load_from_checkpoint("/root/bullet/checkpoints/net1280-interleaved-11-26-factorised-wdl03-04-600/");
     trainer.run(&schedule, &settings, &data_loader);
 }
 
